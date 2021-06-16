@@ -3,7 +3,9 @@ import random
 import discord
 import requests
 import openpyxl as xl
+import pandas as p
 import math as m
+import asyncio
 
 from dotenv import load_dotenv
 from discord.ext import commands, tasks
@@ -11,6 +13,8 @@ from discord.ext.commands import has_permissions, MissingPermissions, Context
 
 intents = discord.Intents.all()
 intents.members = True
+
+spreadsheet = 'users.xlsx'
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -20,73 +24,36 @@ GUILD_ID = os.getenv('DISCORD_GUILD_ID')
 
 # --------------------------------------------------------------------------- #
 
-def update_user(user, index):
-    excel = xl.load_workbook("users.xlsx")
-    sheet = excel.active
-    sheet['A' + str(index)] = str(user.id) if sheet['A' + str(index)].value is None else sheet['A' + str(index)].value
-    sheet['B' + str(index)] = str(user.name) if sheet['B' + str(index)].value is None else sheet['B' + str(index)].value
-    sheet['C' + str(index)] = str(1000) if sheet['C' + str(index)].value is None else sheet['C' + str(index)].value
-    sheet['D' + str(index)] = str(0) if sheet['D' + str(index)].value is None else sheet['D' + str(index)].value
-    sheet['E' + str(index)] = str(0) if sheet['E' + str(index)].value is None else sheet['E' + str(index)].value
-    excel.save("users.xlsx")
-
-
-def find_user(user):
-    excel = xl.load_workbook("users.xlsx")
-    sheet = excel.active
-    first_column = sheet['A']
-    ids = []
-    index = 1
-    for x in range(len(first_column)):
-        ids.append(first_column[x].value)
-        index += 1
-        if str(user.id) == str(first_column[x].value):
-            update_user(user, index-1)
-            return index-1
-    update_user(user, index-1)
-    return index-1
-
-
 def bot_check(member):
     return member.bot
 
-
-def get_current(user, *argv):
-    letters = []
-    values = []
-    for arg in argv:
-        if arg == 'money':
-            letters.append('C')
-        elif arg == 'hmwins':
-            letters.append('D')
-        elif arg == 'hmmoney':
-            letters.append('E')
-        else:
-            return
-    index = find_user(user)
-    excel = xl.load_workbook("users.xlsx")
-    sheet = excel.active
-    for x in range(len(letters)):
-        values.append(sheet[letters[x] + str(index)].value)
-    return values
-
+def find_user(user):
+    df = p.read_excel(spreadsheet)
+    df = df.astype(str)
+    index = df[df['ids']==str(user.id)].index.values
+    if len(index) == 0:
+        index = [int(df.iloc[-1].name)+1]
+        df = df.append(p.DataFrame([[str(index[0]), str(user.id), str(user.name), str(1000), str(0), str(0)]], columns=['index', 'ids', 'names', 'money', 'hmwins', 'hmmoney']), ignore_index=True)
+        df.to_excel(spreadsheet, index=False)
+    return index[0]
 
 def alter(user, amount, type):
-    if type == 'money':
-        letter = 'C'
-    elif type == 'hmwins':
-        letter = 'D'
-    elif type =='hmmoney':
-        letter = 'E'
-    else:
-        return
+    df = p.read_excel(spreadsheet)
+    df = df.astype(str)
     index = find_user(user)
-    excel = xl.load_workbook("users.xlsx")
-    sheet = excel.active
-    current_value = sheet[letter + str(index)].value
-    new_value = int(current_value) + int(amount)
-    sheet[letter + str(index)] = str(new_value)
-    excel.save("users.xlsx")
+    new_value = int(df.iloc[index][str(type)]) + int(amount)
+    df.loc[int(index), str(type)] = str(new_value)
+    df.to_excel(spreadsheet, index=False)
+
+def get_current(user, *argv):
+    values = []
+    index = find_user(user)
+    df = p.read_excel(spreadsheet)
+    df = df.astype(str)
+    for arg in argv:
+        values.append(df.iloc[index][str(arg)])
+    values.append(index)
+    return values
 
 
 class Gamble(commands.Cog):
@@ -102,7 +69,7 @@ class Gamble(commands.Cog):
             g = bot.get_guild(int(GUILD_ID))
             for user in g.members:
                 if not bot_check(user):
-                    alter(user, 50, 'money')
+                    alter(user, 25, 'money')
         else:
             self.timer_check = True
 
@@ -129,7 +96,7 @@ class Gamble(commands.Cog):
 
     @money.error
     async def money_error(self, ctx, error):
-        await ctx.send(error)
+        await ctx.send('Format: -money [user]')
 
     # Give some money to another player.
     @commands.command(name='pay', help="Pay another user some money.",
@@ -179,28 +146,28 @@ class Gamble(commands.Cog):
                 await ctx.send("{}, you won! Your new balance is `${}`."
                                .format(username, new_bal))
             else:
-                (user, -1 * int(bet), 'money')
+                alter(user, -1 * int(bet), 'money')
                 new_bal = get_current(user, 'money')[0]
                 await ctx.send("{}... you're a loser. Your new balance is `${}`."
                                .format(username, new_bal))
 
     @flip.error
     async def flip_error(self, ctx, error):
-        await ctx.send(error)
+        await ctx.send('Format: -flip [amount]')
 
     @commands.command(name='setbal')
     @has_permissions(administrator=True)
     async def setbal(self, ctx, user: discord.member.Member, amount: int):
         index = find_user(user)
-        excel = xl.load_workbook("users.xlsx")
-        sheet = excel.active
-        sheet['C' + str(index)] = str(amount)
-        excel.save("users.xlsx")
+        df = p.read_excel(spreadsheet)
+        df = df.astype(str)
+        df.loc[int(index), 'money'] = str(amount)
+        df.to_excel(spreadsheet, index=False)
         await ctx.send(f"{user.name}'s balance has been set to `${amount}`.")
 
     @setbal.error
     async def setbal_error(self, ctx, error):
-        await ctx.send(error)
+        print(error)
 
     @commands.command(name='resetmoney')
     @has_permissions(administrator=True)
@@ -212,40 +179,7 @@ class Gamble(commands.Cog):
 
     @resetmoney.error
     async def resetmoney_error(self, ctx, error):
-        await ctx.send(error)
-
-    @commands.command(name='steal', help='Try to steal money from another user.')
-    async def steal(self, ctx, amount: int, user: discord.member.Member):
-        if not bot_check(user):
-            thief = ctx.message.author
-            thief_index = find_user(thief)
-            peasant_index = find_user(user)
-            peasant_balance = get_current(user, 'money')[0]
-            thief_balance = get_current(thief, 'money')[0]
-            if amount == 0:
-                await ctx.send("Trying to steal $0? Wtf...")
-            elif thief_index == peasant_index:
-                await ctx.send("You cannot steal money from yourself.")
-            elif amount > int(thief_balance):
-                await ctx.send("Nah. Not enough money.")
-            elif amount > int(peasant_balance):
-                await ctx.send("Homie doesn't have enough money. Bruv kek.")
-            else:
-                chance = random.choice(range(0,100))
-                if chance < 25:
-                    alter(thief, amount, 'money')
-                    alter(user, -amount, 'money')
-                    await ctx.send(f'{thief.name} has stolen `${amount}` from {user.name} XD')
-                else:
-                    alter(thief, -amount, 'money')
-                    alter(user, amount, 'money')
-                    await ctx.send(f'{thief.name} tried to steal `${amount}` from {user.name} and failed ?XD')
-        else:
-            await ctx.send("You cannot steal money from a bot :/")
-
-    @steal.error
-    async def steal_error(self, ctx, error):
-        await ctx.send(error)
+        print(error)
 
 
 # --------------------------------------------------------------------------- #
@@ -258,8 +192,8 @@ class Leaderboard(commands.Cog):
         self.msg = None
         self.active = False
         self.user = None
-        self.id_money_list = []
         self.index = 0
+        self.task = False
 
     @commands.command(name='leaderboard', help='Show a money leaderboard', aliases=['rank', 'ranks', 'ldb'])
     async def leaderboard(self, ctx):
@@ -268,90 +202,69 @@ class Leaderboard(commands.Cog):
             self.cleanup()
         self.active = True
         self.user = ctx.message.author
-        await ctx.message.delete()
-        await self.calc_ranks(ctx)
         self.disp.set_thumbnail(url='https://i.imgur.com/VJ2brAT.png')
         await self.display(ctx)
 
     async def display(self, ctx):
+        df = p.read_excel(spreadsheet)
+        df = df.sort_values('money', ascending=False)
+        counter = find_user(self.user)
         if self.msg is None:
             for num in range(10):
-                new_id = self.id_money_list[self.index][1]
-                user = await ctx.message.guild.fetch_member(int(new_id))
-                username = user.name
-                bal = self.id_money_list[self.index][0]
+                username = df.iloc[self.index]['names']
+                bal = df.iloc[self.index]['money']
                 self.disp.add_field(name="Rank {}:".format(self.index+1), value="{}:\t\t${}\n".format(username, bal), inline=False)
                 self.index += 1
-            curr_user = self.user.id
-            counter = [element for i, element in self.id_money_list].index(int(curr_user))
             bal = get_current(self.user, 'money')[0]
-            self.msg = await ctx.send("**`{}, you are currently ranked {}/{} with ${}.`**".format(self.user.name, counter+1, len(self.id_money_list), bal), embed=self.disp)
+            self.msg = await ctx.send("**`{}, you are currently ranked {}/{} with ${}.`**".format(self.user.name, counter+1, len(df), bal), embed=self.disp)
             await self.msg.add_reaction(emoji='⬅️')
             await self.msg.add_reaction(emoji='➡️')
             await self.msg.add_reaction(emoji='🔄')
             await self.msg.add_reaction(emoji='❌')
         else:
             for num in range(10):
-                new_id = self.id_money_list[self.index][1]
-                user = await ctx.message.guild.fetch_member(int(new_id))
-                username = user.name
-                bal = self.id_money_list[self.index][0]
+                username = df.iloc[self.index]['names']
+                bal = df.iloc[self.index]['money']
                 self.disp.set_field_at(index=num, name="Rank {}:".format(self.index+1), value="{}:\t\t${}\n".format(username, bal), inline=False)
                 self.index += 1
-            curr_user = self.user.id
-            counter = [element for i, element in self.id_money_list].index(int(curr_user))
             bal = get_current(self.user, 'money')[0]
-            await self.msg.edit(content="**`{}, you are currently ranked {}/{} with ${}.`**".format(self.user.name, counter+1, len(self.id_money_list), bal), embed=self.disp)
-
-    async def calc_ranks(self, ctx):
-        self.id_money_list = []
-        async for user in ctx.message.author.guild.fetch_members():
-            if not bot_check(user):
-                balance = get_current(user, 'money')[0]
-                index = find_user(user)
-                excel = xl.load_workbook("users.xlsx")
-                sheet = excel.active
-                id_l = sheet['A' + str(index)].value
-                new_list = [int(balance), int(id_l)]
-                self.id_money_list.append(new_list)
-        self.id_money_list.sort(reverse=True)
+            await self.msg.edit(content="**`{}, you are currently ranked {}/{} with ${}.`**".format(self.user.name, counter+1, len(df), bal), embed=self.disp)
 
     def cleanup(self):
         self.disp = discord.Embed(title="Money Leaderboard")
         self.msg = None
         self.active = False
-        self.id_money_list = []
         self.index = 0
         self.user = None
 
     @commands.Cog.listener()
     async def on_reaction_add(self, reaction, user):
         if reaction.message == self.msg and not bot_check(user):
-            self.user = user
-            ctx = await self.bot.get_context(self.msg)
+            df = p.read_excel(spreadsheet)
             await reaction.remove(user)
-            if reaction.emoji == '⬅️':
-                await self.calc_ranks(ctx)
-                if self.index < 20:
-                    pass
-                else:
-                    self.index -= 20
+            if not self.task:
+                self.task = True
+                self.user = user
+                ctx = await self.bot.get_context(self.msg)
+                if reaction.emoji == '⬅️':
+                    if self.index < 20:
+                        pass
+                    else:
+                        self.index -= 20
+                        await self.display(ctx)
+                elif reaction.emoji == '➡️':
+                    if self.index + 10 > len(df):
+                        pass
+                    else:
+                        await self.display(ctx)
+                elif reaction.emoji == '🔄':
+                    if self.index > 0:
+                        self.index -= 10
                     await self.display(ctx)
-            elif reaction.emoji == '➡️':
-                await self.calc_ranks(ctx)
-                if self.index + 10 > len(self.id_money_list):
-                    pass
-                else:
-                    await self.display(ctx)
-            elif reaction.emoji == '🔄':
-                await self.calc_ranks(ctx)
-                if self.index > 0:
-                    self.index -= 10
-                await self.display(ctx)
-            elif reaction.emoji == '❌':
-                await self.msg.delete()
-                self.cleanup()
-
+                elif reaction.emoji == '❌':
+                    await self.msg.delete()
+                    self.cleanup()
+                self.task = False
 
 
 # --------------------------------------------------------------------------- #
@@ -445,252 +358,12 @@ class Special(commands.Cog):
     async def kill(self, ctx):
         await ctx.message.delete()
         print('Goodbye.')
-        await bot.logout()
+        await bot.close()
 
     @kill.error
     async def kill_error(self, ctx, error):
         await ctx.send(error)
 
-
-# --------------------------------------------------------------------------- #
-
-
-class Hangman(commands.Cog):
-    def __init__(self, bot, path_to_dict):
-        self.bot = bot
-        self.game_in_progress = False
-        self.player = None
-        self.word = None
-        f = open(path_to_dict, 'r')
-        self.dict = f.readlines()
-        f.close()
-        self.stage = 0
-        self.guessed = set()
-        self.real_word = []
-        self.wrong = []
-        self.disp = discord.Embed(color=discord.Colour.darker_grey())
-        self.msg = None
-        self.authormsg = None
-        self.botmsg = None
-        self.win = False
-        self.player = None
-        self.prize = 2000
-        self.set = None
-        self.timer_check = False
-        self.hmtop = discord.Embed(title="Hangman Top Stats", color=discord.Colour.darker_grey())
-        self.topmsg = None
-        self.id_win_list = []
-        self.id_money_list = []
-        self.images = [['https://i.imgur.com/bD68c54.png', 'https://i.imgur.com/Bi1S1r2.png', 'https://i.imgur.com/DKeCsD3.png', 'https://i.imgur.com/aSMmgDH.png', 'https://i.imgur.com/3pPsgr7.png', 'https://i.imgur.com/BCb26Ne.png'],
-                       ['https://i.imgur.com/bD68c54.png', 'https://i.imgur.com/Bi1S1r2.png', 'https://i.imgur.com/DKeCsD3.png', 'https://i.imgur.com/aSMmgDH.png', 'https://i.imgur.com/3pPsgr7.png', 'https://i.imgur.com/BCb26Ne.png']]
-
-    @commands.command(name='hangman', help='Start a game of hangman.',
-                      aliases=['hm'])
-    async def hm(self, ctx):
-        if not self.game_in_progress:
-            await ctx.message.delete()
-            self.player = ctx.message.author
-            self.game_in_progress = True
-            self.word = random.choice(self.dict).rstrip()
-            print(f"Hangman word: {self.word}")
-            self.real_word = ['_' for i in range(len(self.word))]
-            self.set = random.choice(range(len(self.images))) - 1
-            self.timer.start(ctx)
-            await self.display(ctx)
-        else:
-            await ctx.message.delete()
-            await self.clear_msg()
-            self.authormsg = ctx.message
-            self.botmsg = await ctx.send('A game of hangman is already in progress!')
-
-    @commands.command(name='hmstats')
-    async def hmstats(self, ctx, user: discord.member.Member = None):
-        user = ctx.message.author if user is None else user
-        if not bot_check(user):
-            values = get_current(user, 'hmwins', 'hmmoney')
-            x = 'win' if int(values[0]) == 1 else 'wins'
-            if user == ctx.message.author:
-                msg = "{}, you currently have `{}` {} and `${}` total earnings.".format(user.name, values[0], x, values[1])
-            else:
-                msg = "{} currently has `{}` {} and `${}` total earnings.".format(user.name, values[0], x, values[1])
-            await ctx.send(msg)
-        else:
-            await ctx.send("Bots don't play hangman lol!")
-
-    @commands.command(name='hmtop')
-    async def hmtop(self, ctx):
-        await ctx.message.delete()
-        await self.cleanuptop()
-        await self.calc_ranks(ctx)
-        wins_msg, money_msg = '```', '```'
-        for num in range(3):
-            win_member = await ctx.message.guild.fetch_member(int(self.id_win_list[num][1]))
-            win_user = win_member.name
-            money_member = await ctx.message.guild.fetch_member(int(self.id_money_list[num][1]))
-            money_user = money_member.name
-            wins = self.id_win_list[num][0]
-            money = self.id_money_list[num][0]
-            wins_msg += f"#{num+1} » {win_user} » {wins}\n"
-            money_msg += f"#{num+1} » {money_user} » ${money}\n"
-        wins_msg += '```'
-        money_msg += '```'
-        self.hmtop.add_field(name="Total Wins", value=wins_msg, inline=False)
-        self.hmtop.add_field(name="Total Earnings", value=money_msg, inline=False)
-        self.hmtop.set_thumbnail(url='https://i.imgur.com/VJ2brAT.png')
-        self.topmsg = await ctx.send(embed=self.hmtop)
-
-    async def cleanuptop(self):
-        self.hmtop = discord.Embed(title="Hangman Top Stats", color=discord.Colour.darker_grey())
-        self.topmsg = None
-        self.id_win_list = []
-        self.id_money_list = []
-
-    async def calc_ranks(self, ctx):
-        self.id_win_list = []
-        self.id_money_list = []
-        async for user in ctx.message.author.guild.fetch_members():
-            if not bot_check(user):
-                values = get_current(user, 'hmwins', 'hmmoney')
-                index = find_user(user)
-                excel = xl.load_workbook("users.xlsx")
-                sheet = excel.active
-                id_l = sheet['A' + str(index)].value
-                new_list = [int(values[0]), int(id_l)]
-                new_list2 = [int(values[1]), int(id_l)]
-                self.id_win_list.append(new_list)
-                self.id_money_list.append(new_list2)
-        self.id_win_list.sort(reverse=True)
-        self.id_money_list.sort(reverse=True)
-
-    @commands.command(name='guess', help='Guess a letter.',
-                      aliases=['g'])
-    async def guess(self, ctx, letter: str):
-        letter = letter.lower()
-        if self.game_in_progress and self.player == ctx.message.author:
-            await self.clear_msg()
-            self.authormsg = ctx.message
-            if len(letter) > 1:
-                self.botmsg = await ctx.send('Your guess must be 1 character!')
-            elif letter not in self.guessed:
-                self.guessed.add(letter)
-                if letter in self.word:
-                    self.botmsg = await ctx.send('Good guess!')
-                    for i in range(len(self.word)):
-                        if self.word[i:i+1] == letter:
-                            self.real_word[i] = letter
-                else:
-                    self.botmsg = await ctx.send('Bad guess...')
-                    self.stage += 1
-                    self.wrong.append(letter)
-            else:
-                self.botmsg = await ctx.send('You have already guessed that!')
-            potential_win = ''.join(self.real_word)
-            if potential_win == self.word:
-                self.win = True
-            await self.display(ctx)
-
-    @guess.error
-    async def guess_error(self, ctx, error):
-        self.authormsg = ctx.message
-        self.botmsg = await ctx.send(error)
-
-    @commands.command(name='answer', help='Guess the word.')
-    async def answer(self, ctx, word: str):
-        word = word.lower()
-        if self.game_in_progress and self.player == ctx.message.author:
-            await self.clear_msg()
-            self.authormsg = ctx.message
-            if word == self.word:
-                self.botmsg = await ctx.send('NICE!')
-                self.win = True
-            else:
-                self.botmsg = await ctx.send('Bad guess...')
-                self.stage += 1
-            await self.display(ctx)
-
-    @answer.error
-    async def answer_error(self, ctx, error):
-        self.authormsg = ctx.message
-        self.botmsg = await ctx.send(error)
-
-    @commands.command(name='end', help='End the current game.')
-    async def end(self, ctx):
-        await self.clear_msg()
-        if self.game_in_progress and self.player == ctx.message.author:
-            await ctx.send(f'You have decided to end the game early. The word was: {self.word}.')
-            self.cleanup()
-        else:
-            await ctx.send('A game is not currently in progress.')
-
-    async def clear_msg(self):
-        if self.authormsg or self.botmsg is not None:
-            try:
-                await self.authormsg.delete()
-            except:
-                pass
-            try:
-                await self.botmsg.delete()
-            except:
-                pass
-
-    def cleanup(self):
-        self.game_in_progress = False
-        self.stage = 0
-        self.guessed = set()
-        self.real_word = []
-        self.wrong = []
-        self.msg = None
-        self.authormsg = None
-        self.botmsg = None
-        self.player = None
-        self.disp = discord.Embed(color=discord.Colour.darker_grey())
-        self.win = False
-        self.prize = 2000
-        self.set = 0
-        self.timer_check = False
-        self.timer_end()
-        return
-
-    async def display(self, ctx):
-        wrd = '``` ' + ''.join([let+' ' for let in self.word]) + '```' if self.win else '``` ' + ''.join([let+' ' for let in self.real_word]) + '```'
-        guessed = ''.join([let+' ' for let in self.guessed])
-        self.stage = len(self.images[self.set]) - 1 if self.win else self.stage
-        self.disp.title = 'HANGMAN'
-        self.disp.description = wrd
-        self.disp.set_thumbnail(url=self.player.avatar_url)
-        self.disp.set_image(url=self.images[self.set][self.stage])
-        self.disp.set_footer(text=f'» Letters guessed: {guessed}')
-        if self.msg is None:
-            #self.disp.add_field(name='Word to Guess', value=wrd)
-            self.msg = await ctx.send('Use `-guess <letter>` or `-answer <word>` to guess.', embed=self.disp)
-        else:
-            #self.disp.set_field_at(index=0, name='Word to Guess', value=wrd)
-            await self.msg.edit(embed=self.disp)
-        if self.win:
-            if len(self.wrong) > 0:
-                self.prize -= m.floor(self.prize * float(len(self.wrong)/10))
-            await self.clear_msg()
-            alter(self.player, self.prize, 'money')
-            alter(self.player, 1, 'hmwins')
-            alter(self.player, self.prize, 'hmmoney')
-            bal = get_current(self.player, 'money')[0]
-            await ctx.send(f"Congratulations {self.player.name}, you guessed the word and earned `${self.prize}`! You now have `${bal}`.")
-            self.cleanup()
-        if self.stage == len(self.images[self.set]) - 1:
-            await self.clear_msg()
-            await ctx.send(f"{self.player.name}... you lost! The word was: `{self.word}`")
-            self.cleanup()
-
-    @tasks.loop(minutes=5.0)
-    async def timer(self, ctx):
-        if self.timer_check:
-            await ctx.send(f'{self.player.name}, your game timed out!')
-            self.cleanup()
-        else:
-            self.timer_check = True
-
-    def timer_end(self):
-        self.timer.cancel()
 
 # --------------------------------------------------------------------------- #
 
@@ -706,7 +379,6 @@ class Profile(commands.Cog):
 
     @commands.command(name='profile', aliases=['prof'])
     async def profile(self, ctx, user: discord.member.Member = None):
-        await ctx.message.delete()
         await self.cleanup()
         self.user = ctx.message.author if user is None else user
         roles = self.user.roles[1:]
@@ -745,7 +417,6 @@ class Help(commands.Cog):
 
     @commands.command(name='help')
     async def help(self, ctx, option=None):
-        await ctx.message.delete()
         await self.cleanup()
         self.disp.set_footer(text='Oculus Bot', icon_url='https://i.imgur.com/VJ2brAT.png')
         self.disp.set_thumbnail(url='https://i.imgur.com/VJ2brAT.png')
@@ -756,31 +427,51 @@ class Help(commands.Cog):
             await self.gamb(ctx)
         elif option == 'blackjack':
             await self.bj(ctx)
+        elif option == 'stats':
+            await self.hmstats(ctx)
+        elif option == 'channel':
+            await self.privchan(ctx)
         elif option is None:
             await self.display(ctx)
         else:
             return
 
     async def hm(self, ctx):
-        self.disp.add_field(name='\u200b', value='```-hangman, -hm```» Start a game of Hangman.', inline=False)
-        self.disp.add_field(name='\u200b', value='```-guess [letter], -g [letter]```» Guess a letter.', inline=False)
-        self.disp.add_field(name='\u200b', value='```-answer [word]```» Guess the entire word.', inline=False)
-        self.disp.add_field(name='\u200b', value='```-endhangman, -endhm```» End your game of Hangman early.', inline=False)
-        self.disp.add_field(name='\u200b', value='```-hmstats [user]```» Show Hangman stats for a user.', inline=False)
-        self.disp.add_field(name='\u200b', value='```-hmtop```» Show the top 3 Hangman players.', inline=False)
+        hm = '```-hangman, -hm```» Start a game of Hangman.'
+        hm += '```-guess [letter], -g [letter]```» Guess a letter.'
+        hm += '```-answer [word]```» Guess the entire word.'
+        hm += '```-endhangman, -endhm```» End your game of Hangman early.'
+        self.disp.add_field(name='**Playing Hangman**', value=hm, inline=False)
+        self.disp.add_field(name='**Hangman Stats**', value='```-help Stats```» Commands used for Hangman stats.', inline=False)
+        self.disp.add_field(name='**Private Hangman Channel**', value='```-help Channel```» Commands used for changing your private Hangman channel.', inline=False)
+        self.msg = await ctx.send(embed=self.disp)
+
+    async def hmstats(self, ctx):
+        stats = '```-hmstats [user]```» Show Hangman stats for a user.'
+        stats += '```-hmtop```» Show the top 3 Hangman players.'
+        self.disp.add_field(name='**Hangman Stats**', value=stats, inline=False)
+        self.msg = await ctx.send(embed=self.disp)
+
+    async def privchan(self, ctx):
+        chan = '```-add [user]```» Add a user to view your Hangman games.'
+        chan += '```-remove [user]```» Remove a user from viewing your Hangman games.'
+        chan += "```-leave```» Leave another user's private Hangman channel."
+        self.disp.add_field(name='**Private Hangman Channel**', value=chan, inline=False)
         self.msg = await ctx.send(embed=self.disp)
 
     async def gamb(self, ctx):
-        self.disp.add_field(name='\u200b', value="```-money [user], -bal [user]```» Check a user's balance.", inline=False)
-        self.disp.add_field(name='\u200b', value="```-pay [amount] [user], -give [amount] [user]```» Send money to another user.", inline=False)
-        self.disp.add_field(name='\u200b', value="```-coinflip [amount], -flip [amount], -cf [amount]```» Double your money with a 50/50 chance.", inline=False)
-        self.disp.add_field(name='\u200b', value="```-steal [amount] [user]```» Attempt to steal money from another user.", inline=False)
-        self.disp.add_field(name='\u200b', value="```-leaderboard, -ldb, -rank```» Show a leaderboard based on money.", inline=False)
+        gamb = "```-money [user], -bal [user]```» Check a user's balance."
+        gamb += "```-pay [amount] [user], -give [amount] [user]```» Send money to another user."
+        gamb += "```-coinflip [amount], -flip [amount], -cf [amount]```» Double your money with a 50/50 chance."
+        # gamb += "```-steal [amount] [user]```» Attempt to steal money from another user."
+        gamb += "```-leaderboard, -ldb, -rank```» Show a leaderboard based on money."
+        self.disp.add_field(name='**Gamble**', value=gamb, inline=False)
         self.msg = await ctx.send(embed=self.disp)
 
     async def bj(self, ctx):
-        self.disp.add_field(name='\u200b', value="```-blackjack [amount], -bj [amount]```» Start a game of Blackjack.", inline=False)
-        self.disp.add_field(name='\u200b', value="```-endblackjack, -endbj```» End your game of Blackjack early .", inline=False)
+        bj = "```-blackjack [amount], -bj [amount]```» Start a game of Blackjack."
+        bj += "```-endblackjack, -endbj```» End your game of Blackjack early."
+        self.disp.add_field(name='**Blackjack**', value=bj, inline=False)
         self.msg = await ctx.send(embed=self.disp)
 
     async def display(self, ctx):
@@ -855,7 +546,7 @@ class Blackjack(commands.Cog):
         self.end = []
         self.prize = []
         self.buyin = []
-
+        self.active = 0
         self.decks = 4 * 4
         self.cards = [self.decks, self.decks, self.decks, self.decks, self.decks, self.decks, self.decks, self.decks, self.decks, self.decks, self.decks, self.decks, self.decks]
         self.deck = ["2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟", "🇯", "🇶", "🇰", "🇦"]
@@ -864,8 +555,10 @@ class Blackjack(commands.Cog):
     @commands.command(name='blackjack', help='Play a game of blackjack.',
                       aliases=['bj'])
     async def blackjack(self, ctx, buyin: str):
-        await ctx.message.delete()
         if ctx.message.author not in self.player:
+            if self.active > 0:
+                await asyncio.sleep(self.active*1.5)
+            self.active += 1
             index = len(self.player)
             self.disp.append(discord.Embed(color=discord.Colour.blue()))
             self.player.append(ctx.message.author)
@@ -900,9 +593,8 @@ class Blackjack(commands.Cog):
                 player_second = self.pick_rand()
                 self.player_hand[index] += player_first + ' '
                 self.player_hand[index] += player_second
-                self.player_value[index] += self.get_value(player_first, self.player, index)
-                self.player_value[index] += self.get_value(player_second, self.player, index)
-                # self.timer.start(ctx)
+                self.player_value[index] += self.get_value(player_first, self.player[index], index)
+                self.player_value[index] += self.get_value(player_second, self.player[index], index)
                 await self.display(ctx, index)
         else:
             await ctx.send('You are already playing a game of Blackjack!')
@@ -942,10 +634,10 @@ class Blackjack(commands.Cog):
                 msg = f"Nice job on that W, {self.player[index].name}! You win `${self.prize[index]}`. Your new balance is `${bal}`."
             await ctx.send(msg)
             self.cleanup(index)
+        self.active -= 1
 
-    @commands.command(name='endblackjack', aliases=['endbj'])
+    @commands.command(name='endblackjack', aliases=['endbj', 'bjend', 'blackjackend'])
     async def endbj(self, ctx):
-        await ctx.message.delete()
         if ctx.message.author in self.player:
             index = self.player.index(ctx.message.author)
             alter(self.player[index], self.buyin[index], 'money')
@@ -955,7 +647,7 @@ class Blackjack(commands.Cog):
             await ctx.send('You do not have an active game of Blackjack.')
 
     def pick_rand(self):
-        self.resetdeck() if self.cardsleft == 0 else None
+        self.resetdeck() if self.cardsleft < 4 else None
         index = random.choice(range(0, len(self.deck)))
         choice = self.deck[index] if self.cards[index] != 0 else self.pick_rand()
         self.cards[index] -= 1 if self.cards[index] != 0 else 0
@@ -979,8 +671,10 @@ class Blackjack(commands.Cog):
 
     def resetdeck(self):
         self.decks = 4 * 4
-        self.cards = [self.decks, self.decks, self.decks, self.decks, self.decks, self.decks, self.decks, self.decks, self.decks, self.decks, self.decks, self.decks, self.decks]
+        for x in range(len(self.cards)):
+            self.cards[x] = self.decks
         self.cardsleft = sum(self.cards)
+        return
 
     def get_value(self, string, player, index):
         try:
@@ -1023,16 +717,283 @@ class Blackjack(commands.Cog):
     @commands.Cog.listener()
     async def on_reaction_add(self, reaction, user):
         if user in self.player:
+            if self.active > 0:
+                await asyncio.sleep(self.active*1.5)
             index = self.player.index(user)
             ctx = await self.bot.get_context(self.msg[index])
             if reaction.emoji == '✅':
+                self.active += 1
                 await reaction.remove(user)
                 await self.hit(ctx, user, index)
                 await self.display(ctx, index)
             elif reaction.emoji == '❌':
+                self.active += 1
                 await reaction.remove(user)
                 await self.hit(ctx, None, index)
                 await self.display(ctx, index)
+
+
+# --------------------------------------------------------------------------- #
+
+
+class Hangman(commands.Cog):
+    def __init__(self, bot, path_to_dict):
+        self.bot = bot
+        self.player = []
+        self.word = []
+        f = open(path_to_dict, 'r')
+        self.dict = f.readlines()
+        f.close()
+        self.stage = []
+        self.guessed = []
+        self.real_word = []
+        self.wrong = []
+        self.category = None
+        self.channel = []
+        self.disp = []
+        self.msg = []
+        self.authormsg = None
+        self.botmsg = None
+        self.win = []
+        self.prize = []
+        self.active = 0
+        self.set = []
+        self.hmtop = discord.Embed(title="Hangman Top Stats", color=discord.Colour.darker_grey())
+        self.topmsg = None
+        self.images = [['https://i.imgur.com/bD68c54.png', 'https://i.imgur.com/Bi1S1r2.png', 'https://i.imgur.com/DKeCsD3.png', 'https://i.imgur.com/aSMmgDH.png', 'https://i.imgur.com/3pPsgr7.png', 'https://i.imgur.com/BCb26Ne.png'],
+                       ['https://i.imgur.com/bD68c54.png', 'https://i.imgur.com/Bi1S1r2.png', 'https://i.imgur.com/DKeCsD3.png', 'https://i.imgur.com/aSMmgDH.png', 'https://i.imgur.com/3pPsgr7.png', 'https://i.imgur.com/BCb26Ne.png']]
+
+    @commands.command(name='hangman', help='Start a game of hangman.',
+                      aliases=['hm'])
+    async def hm(self, ctx):
+        if ctx.message.author not in self.player:
+            if self.active > 0:
+                await asyncio.sleep(self.active*1.5)
+            self.active += 1
+            index = len(self.player)
+            self.player.append(ctx.message.author)
+            self.word.append(random.choice(self.dict).rstrip())
+            self.stage.append(0)
+            self.guessed.append(set())
+            print(f"{ctx.message.author.name}'s Hangman word: {self.word[index]}")
+            self.real_word.append(['_' for i in range(len(self.word[index]))])
+            self.wrong.append([])
+            self.category = self.bot.get_channel(854455329503838258) if self.category is None else self.category
+            self.disp.append(discord.Embed(color=discord.Colour.darker_grey()))
+            self.win.append(False)
+            self.prize.append(2000)
+            self.set.append(random.choice(range(len(self.images))) - 1)
+            self.msg.append(None)
+            text_channel_list = []
+            for channel in self.category.text_channels:
+                text_channel_list.append(channel.name)
+            player_channel = 'hangman-' + self.player[index].name.lower()
+            if player_channel not in text_channel_list:
+                new_chan = await self.category.create_text_channel(player_channel)
+                self.channel.append(new_chan)
+            else:
+                self.channel.append(discord.utils.get(ctx.guild.channels, name=player_channel))
+            await self.channel[index].set_permissions(self.player[index], view_channel=True, send_messages=True)
+            await ctx.send(f'Starting your game of Hangman in <#{self.channel[index].id}>')
+            await self.display(self.channel[index], index)
+        else:
+            await self.clear_msg()
+            self.authormsg = ctx.message
+            self.botmsg = await ctx.send('You already have an active game of Hangman!')
+
+    @commands.command(name='hmstats')
+    async def hmstats(self, ctx, user: discord.member.Member = None):
+        user = ctx.message.author if user is None else user
+        if not bot_check(user):
+            values = get_current(user, 'hmwins', 'hmmoney')
+            x = 'win' if int(values[0]) == 1 else 'wins'
+            if user == ctx.message.author:
+                msg = "{}, you currently have `{}` {} and `${}` total earnings.".format(user.name, values[0], x, values[1])
+            else:
+                msg = "{} currently has `{}` {} and `${}` total earnings.".format(user.name, values[0], x, values[1])
+            await ctx.send(msg)
+        else:
+            await ctx.send("Bots don't play hangman lol!")
+
+    @commands.command(name='hmtop')
+    async def hmtop(self, ctx):
+        await self.cleanuptop()
+        df = p.read_excel(spreadsheet)
+        dfwin = df.sort_values('hmwins', ascending=False)
+        dfmoney = df.sort_values('hmmoney', ascending=False)
+        wins_msg, money_msg = '```', '```'
+        for num in range(3):
+            win_user = dfwin.iloc[num]['names']
+            money_user = dfmoney.iloc[num]['names']
+            wins = dfwin.iloc[num]['hmwins']
+            money = dfmoney.iloc[num]['hmmoney']
+            wins_msg += f"#{num+1} » {win_user} » {wins}\n"
+            money_msg += f"#{num+1} » {money_user} » ${money}\n"
+        wins_msg += '```'
+        money_msg += '```'
+        self.hmtop.add_field(name="Total Wins", value=wins_msg, inline=False)
+        self.hmtop.add_field(name="Total Earnings", value=money_msg, inline=False)
+        self.hmtop.set_thumbnail(url='https://i.imgur.com/VJ2brAT.png')
+        self.topmsg = await ctx.send(embed=self.hmtop)
+
+    async def cleanuptop(self):
+        self.hmtop = discord.Embed(title="Hangman Top Stats", color=discord.Colour.darker_grey())
+        self.topmsg = None
+
+    @commands.command(name='guess', help='Guess a letter.',
+                      aliases=['g'])
+    async def guess(self, ctx, letter: str):
+        if self.active > 0:
+            await asyncio.sleep(self.active*1.5)
+        letter = letter.lower()
+        index = self.player.index(ctx.message.author)
+        if self.player[index] == ctx.message.author and ctx.message.channel == self.channel[index]:
+            self.active += 1
+            await self.clear_msg()
+            self.authormsg = ctx.message
+            if len(letter) > 1:
+                self.botmsg = await ctx.send('Your guess must be 1 character!')
+            elif letter not in self.guessed[index]:
+                self.guessed[index].add(letter)
+                if letter in self.word[index]:
+                    self.botmsg = await ctx.send('Good guess!')
+                    for i in range(len(self.word[index])):
+                        if self.word[index][i:i+1] == letter:
+                            self.real_word[index][i] = letter
+                else:
+                    self.botmsg = await ctx.send('Bad guess...')
+                    self.stage[index] += 1
+                    self.wrong[index].append(letter)
+            else:
+                self.botmsg = await ctx.send('You have already guessed that!')
+            potential_win = ''.join(self.real_word[index])
+            if potential_win == self.word[index]:
+                self.win[index] = True
+            await self.display(ctx, index)
+
+    @guess.error
+    async def guess_error(self, ctx, error):
+        self.authormsg = ctx.message
+        self.botmsg = await ctx.send('Format: -guess [letter]')
+        print(error)
+
+    @commands.command(name='answer', help='Guess the word.')
+    async def answer(self, ctx, word: str):
+        if self.active > 0:
+            await asyncio.sleep(self.active*1.5)
+        word = word.lower()
+        index = self.player.index(ctx.message.author)
+        if self.player[index] == ctx.message.author and ctx.message.channel == self.channel[index]:
+            self.active += 1
+            await self.clear_msg()
+            self.authormsg = ctx.message
+            if word == self.word[index]:
+                self.botmsg = await ctx.send('NICE!')
+                self.win[index] = True
+            else:
+                self.botmsg = await ctx.send('Bad guess...')
+                self.stage[index] += 1
+            await self.display(ctx, index)
+
+    @answer.error
+    async def answer_error(self, ctx, error):
+        self.authormsg = ctx.message
+        self.botmsg = await ctx.send('Format: -answer [word]')
+        print(error)
+
+    @commands.command(name='endhm', help='End the current game.', aliases=['hmend', 'endhangman', 'hangmanend'])
+    async def endhm(self, ctx):
+        await self.clear_msg()
+        if ctx.message.author in self.player:
+            index = self.player.index(ctx.message.author)
+            await ctx.send(f'You have decided to end the game early. The word was: {self.word[index]}.')
+            self.cleanup(index)
+        else:
+            await ctx.send('A game is not currently in progress.')
+
+    async def clear_msg(self):
+        if self.authormsg or self.botmsg is not None:
+            try:
+                await self.authormsg.delete()
+            except:
+                pass
+            try:
+                await self.botmsg.delete()
+            except:
+                pass
+
+    def cleanup(self, index):
+        del self.word[index]
+        del self.stage[index]
+        del self.guessed[index]
+        del self.real_word[index]
+        del self.wrong[index]
+        del self.channel[index]
+        del self.msg[index]
+        self.authormsg = None
+        self.botmsg = None
+        del self.player[index]
+        del self.disp[index]
+        del self.win[index]
+        del self.prize[index]
+        del self.set[index]
+        return
+
+    async def display(self, ctx, index):
+        wrd = '``` ' + ''.join([let+' ' for let in self.word[index]]) + '```' if self.win[index] else '``` ' + ''.join([let+' ' for let in self.real_word[index]]) + '```'
+        guessed = ''.join([let+' ' for let in self.guessed[index]])
+        self.stage[index] = len(self.images[self.set[index]]) - 1 if self.win[index] else self.stage[index]
+        self.disp[index].title = 'HANGMAN'
+        self.disp[index].description = wrd
+        self.disp[index].set_thumbnail(url=self.player[index].avatar_url)
+        self.disp[index].set_image(url=self.images[self.set[index]][self.stage[index]])
+        self.disp[index].set_footer(text=f'» Letters guessed: {guessed}')
+        if self.msg[index] is None:
+            self.msg[index] = await ctx.send('Use `-guess <letter>` or `-answer <word>` to guess.', embed=self.disp[index])
+        else:
+            await self.msg[index].edit(embed=self.disp[index])
+        if self.win[index]:
+            if len(self.wrong[index]) > 0:
+                self.prize[index] -= m.floor(self.prize[index] * float(len(self.wrong[index])/10))
+            await self.clear_msg()
+            alter(self.player[index], self.prize[index], 'money')
+            alter(self.player[index], 1, 'hmwins')
+            alter(self.player[index], self.prize[index], 'hmmoney')
+            bal = get_current(self.player[index], 'money')[0]
+            await ctx.send(f"Congratulations {self.player[index].name}, you guessed the word and earned `${self.prize[index]}`! You now have `${bal}`.")
+            self.cleanup(index)
+            return
+        if self.stage[index] == len(self.images[self.set[index]]) - 1:
+            await self.clear_msg()
+            await ctx.send(f"{self.player[index].name}... you lost! The word was: `{self.word[index]}`")
+            self.cleanup(index)
+        self.active -= 1
+
+    @commands.command(name='add')
+    async def add(self, ctx, user: discord.member.Member):
+        self.category = self.bot.get_channel(854455329503838258) if self.category is None else self.category
+        channel_names = [channel.name for channel in self.category.text_channels]
+        player_channel = 'hangman-' + ctx.message.author.name.lower()
+        if user != ctx.message.author and player_channel in channel_names:
+            channel = discord.utils.get(ctx.guild.channels, name=player_channel)
+            await channel.set_permissions(user, view_channel=True, send_messages=True)
+            await ctx.send(f'{user.name} has been added to the channel <#{channel.id}>')
+
+    @commands.command(name='remove')
+    async def remove(self, ctx, user: discord.member.Member):
+        self.category = self.bot.get_channel(854455329503838258) if self.category is None else self.category
+        channel_names = [channel.name for channel in self.category.text_channels]
+        player_channel = 'hangman-' + ctx.message.author.name.lower()
+        if user != ctx.message.author and player_channel in channel_names:
+            channel = discord.utils.get(ctx.guild.channels, name=player_channel)
+            await channel.set_permissions(user, view_channel=False)
+
+    @commands.command(name='leave')
+    async def leave(self, ctx):
+        channel = ctx.message.channel
+        self.category = self.bot.get_channel(854455329503838258) if self.category is None else self.category
+        if channel != 'hangman' + ctx.message.author.name.lower() and ctx.message.channel in self.category.text_channels:
+            await channel.set_permissions(ctx.message.author, view_channel=False)
 
 
 # --------------------------------------------------------------------------- #
