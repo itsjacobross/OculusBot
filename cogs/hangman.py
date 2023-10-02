@@ -112,7 +112,7 @@ class Hangman(commands.Cog):
 
             hmstats.add_field(name=f"{ctx.message.guild.name} Stats", value=guild_stats, inline=False)
             hmstats.add_field(name="Total Stats", value=total_stats, inline=False)
-            hmstats.set_thumbnail(url=user.avatar_url)
+            hmstats.set_thumbnail(url=user.display_avatar)
             await ctx.send(embed=hmstats)
         else:
             await ctx.send("Bots don't play hangman lol!")
@@ -250,7 +250,7 @@ class Hangman(commands.Cog):
         self.dict[(guildid, user.id)]["stage"] = len(self.images[self.dict[(guildid, user.id)]["set"]]) - 1 if self.dict[(guildid, user.id)]["win"] else self.dict[(guildid, user.id)]["stage"]
         self.dict[(guildid, user.id)]["display"].title = 'HANGMAN'
         self.dict[(guildid, user.id)]["display"].description = wrd
-        self.dict[(guildid, user.id)]["display"].set_thumbnail(url=user.avatar_url)
+        self.dict[(guildid, user.id)]["display"].set_thumbnail(url=user.display_avatar)
         self.dict[(guildid, user.id)]["display"].set_image(url=self.images[self.dict[(guildid, user.id)]["set"]][self.dict[(guildid, user.id)]["stage"]])
         self.dict[(guildid, user.id)]["display"].set_footer(text=f'» Letters guessed: {guessed}')
         if self.dict[(guildid, user.id)]["msg"] is None:
@@ -363,5 +363,5 @@ class Hangman(commands.Cog):
             await channel.set_permissions(ctx.message.author, view_channel=False) '''
 
 
-def setup(bot):
-    bot.add_cog(Hangman(bot, "dictionary.txt"))
+async def setup(bot):
+    await bot.add_cog(Hangman(bot, "dictionary.txt"))

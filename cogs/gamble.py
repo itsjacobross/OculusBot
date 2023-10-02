@@ -154,5 +154,5 @@ class Gamble(commands.Cog):
         await ctx.send('Format: -flip [amount]')
 
 
-def setup(bot):
-    bot.add_cog(Gamble(bot))
+async def setup(bot):
+    await bot.add_cog(Gamble(bot))

@@ -84,7 +84,7 @@ class Blackjack(commands.Cog):
         print(f'Dealer = {self.dict[(guildid, user.id)]["dealer_value"]}, {user.name} = {self.dict[(guildid, user.id)]["player_value"]}')
         self.cardsleft = sum(self.cards)
         self.dict[(guildid, user.id)]["display"].title = 'BLACKJACK'
-        self.dict[(guildid, user.id)]["display"].set_thumbnail(url=user.avatar_url)
+        self.dict[(guildid, user.id)]["display"].set_thumbnail(url=user.display_avatar)
         self.dict[(guildid, user.id)]["display"].set_footer(text=f'» Number of Decks: {int(self.decks/4)}\n» Cards Remaining: {self.cardsleft}\n» ${self.dict[(guildid, user.id)]["buyin"]} bet')
         if self.dict[(guildid, user.id)]["msg"] is None:
             self.dict[(guildid, user.id)]["display"].add_field(name="**Dealer's Hand**", value=f'> {dealer_hand}', inline=False)
@@ -223,5 +223,5 @@ class Blackjack(commands.Cog):
             self.dict[(guildid, id)]["end"] = True
 
 
-def setup(bot):
-    bot.add_cog(Blackjack(bot))
+async def setup(bot):
+    await bot.add_cog(Blackjack(bot))

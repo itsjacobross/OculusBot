@@ -18,6 +18,13 @@ class Special(commands.Cog):
         print(error)
         await ctx.send(error)
 
+    @commands.command()
+    @commands.is_owner()
+    async def sync(self, ctx):
+        fmt = await ctx.bot.tree.sync()
+        await ctx.send(f'Synced {len(fmt)} commands.')
 
-def setup(bot):
-    bot.add_cog(Special(bot))
+
+
+async def setup(bot):
+    await bot.add_cog(Special(bot))
